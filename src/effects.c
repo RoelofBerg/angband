@@ -634,6 +634,34 @@ bool effect_handler_LOSE_EXP(effect_handler_context_t *context)
 }
 
 /**
+ * Drain some light from the player's light source, if possible
+ */
+bool effect_handler_DRAIN_LIGHT(effect_handler_context_t *context)
+{
+	int drain = effect_calculate_value(context, false);
+
+	int light_slot = slot_by_name(player, "light");
+	struct object *obj = slot_object(player, light_slot);
+
+	if (obj && !of_has(obj->flags, OF_NO_FUEL) && (obj->timeout > 0)) {
+		/* Reduce fuel */
+		obj->timeout -= drain;
+		if (obj->timeout < 1) obj->timeout = 1;
+
+		/* Notice */
+		if (!player->timed[TMD_BLIND]) {
+			msg("Your light dims.");
+			context->ident = true;
+		}
+
+		/* Redraw stuff */
+		player->upkeep->redraw |= (PR_EQUIP);
+	}
+
+	return true;
+}
+
+/**
  * Drain mana from the player, healing the caster.
  */
 bool effect_handler_DRAIN_MANA(effect_handler_context_t *context)
@@ -955,10 +983,10 @@ bool effect_handler_MAP_AREA(effect_handler_context_t *context)
 	}
 
 	/* Fully update the visuals */
-	player->upkeep->update |= (PU_FORGET_VIEW | PU_UPDATE_VIEW | PU_MONSTERS);
+	player->upkeep->update |= (PU_UPDATE_VIEW | PU_MONSTERS);
 
 	/* Redraw whole map, monster list */
-	player->upkeep->redraw |= (PR_MAP | PR_MONLIST | PR_ITEMLIST);
+	player->upkeep->redraw |= (PR_MONLIST | PR_ITEMLIST);
 
 	/* Notice */
 	context->ident = true;
@@ -1035,12 +1063,6 @@ bool effect_handler_DETECT_TRAPS(effect_handler_context_t *context)
 	else
 		msg("You sense no traps.");
 
-	/* Fully update the visuals */
-	player->upkeep->update |= (PU_FORGET_VIEW | PU_UPDATE_VIEW | PU_MONSTERS);
-
-	/* Redraw whole map, monster list */
-	player->upkeep->redraw |= (PR_MAP | PR_MONLIST | PR_ITEMLIST);
-
 	/* Notice */
 	context->ident = true;
 
@@ -1081,14 +1103,17 @@ bool effect_handler_DETECT_DOORS(effect_handler_context_t *context)
 			if (square_isdoor(cave, y, x) && !square_issecretdoor(cave, y, x)) {
 				/* Memorize */
 				square_memorize(cave, y, x);
+				square_light_spot(cave, y, x);
 
 				/* Obvious */
 				doors = true;
 			}
 
 			/* Forget unknown doors in the mapping area */
-			if (square_isdoor(cave_k, y, x) && square_isnotknown(cave, y, x))
+			if (square_isdoor(cave_k, y, x) && square_isnotknown(cave, y, x)) {
 				square_forget(cave, y, x);
+				square_light_spot(cave, y, x);
+			}
 		}
 	}
 
@@ -1097,12 +1122,6 @@ bool effect_handler_DETECT_DOORS(effect_handler_context_t *context)
 		msg("You sense the presence of doors!");
 	else if (context->aware)
 		msg("You sense no doors.");
-
-	/* Fully update the visuals */
-	player->upkeep->update |= (PU_FORGET_VIEW | PU_UPDATE_VIEW | PU_MONSTERS);
-
-	/* Redraw whole map, monster list */
-	player->upkeep->redraw |= (PR_MAP | PR_MONLIST | PR_ITEMLIST);
 
 	context->ident = true;
 
@@ -1142,6 +1161,7 @@ bool effect_handler_DETECT_STAIRS(effect_handler_context_t *context)
 			if (square_isstairs(cave, y, x)) {
 				/* Memorize */
 				square_memorize(cave, y, x);
+				square_light_spot(cave, y, x);
 
 				/* Obvious */
 				stairs = true;
@@ -1154,12 +1174,6 @@ bool effect_handler_DETECT_STAIRS(effect_handler_context_t *context)
 		msg("You sense the presence of stairs!");
 	else if (context->aware)
 		msg("You sense no stairs.");
-
-	/* Fully update the visuals */
-	player->upkeep->update |= (PU_FORGET_VIEW | PU_UPDATE_VIEW | PU_MONSTERS);
-
-	/* Redraw whole map, monster list */
-	player->upkeep->redraw |= (PR_MAP | PR_MONLIST | PR_ITEMLIST);
 
 	context->ident = true;
 	return true;
@@ -1200,6 +1214,7 @@ bool effect_handler_DETECT_GOLD(effect_handler_context_t *context)
 			if (square_hasgoldvein(cave, y, x)) {
 				/* Memorize */
 				square_memorize(cave, y, x);
+				square_light_spot(cave, y, x);
 
 				/* Detect */
 				gold_buried = true;
@@ -1214,12 +1229,6 @@ bool effect_handler_DETECT_GOLD(effect_handler_context_t *context)
 		else if (context->aware)
 			msg("You sense no buried treasure.");
 	}
-
-	/* Fully update the visuals */
-	player->upkeep->update |= (PU_FORGET_VIEW | PU_UPDATE_VIEW | PU_MONSTERS);
-
-	/* Redraw whole map, monster list */
-	player->upkeep->redraw |= (PR_MAP | PR_MONLIST | PR_ITEMLIST);
 
 	context->ident = true;
 	return true;
@@ -1263,6 +1272,7 @@ bool effect_handler_SENSE_OBJECTS(effect_handler_context_t *context)
 
 			/* Mark the pile as aware */
 			floor_pile_sense(cave, y, x);
+			square_light_spot(cave, y, x);
 		}
 	}
 
@@ -1271,11 +1281,8 @@ bool effect_handler_SENSE_OBJECTS(effect_handler_context_t *context)
 	else if (context->aware)
 		msg("You sense no objects.");
 
-	/* Fully update the visuals */
-	player->upkeep->update |= (PU_FORGET_VIEW | PU_UPDATE_VIEW | PU_MONSTERS);
-
 	/* Redraw whole map, monster list */
-	player->upkeep->redraw |= (PR_MAP | PR_MONLIST | PR_ITEMLIST);
+	player->upkeep->redraw |= PR_ITEMLIST;
 
 	context->ident = true;
 	return true;
@@ -1321,6 +1328,7 @@ bool effect_handler_DETECT_OBJECTS(effect_handler_context_t *context)
 
 			/* Mark the pile as seen */
 			floor_pile_know(cave, y, x);
+			square_light_spot(cave, y, x);
 		}
 	}
 
@@ -1329,11 +1337,8 @@ bool effect_handler_DETECT_OBJECTS(effect_handler_context_t *context)
 	else if (context->aware)
 		msg("You detect no objects.");
 
-	/* Fully update the visuals */
-	player->upkeep->update |= (PU_FORGET_VIEW | PU_UPDATE_VIEW | PU_MONSTERS);
-
 	/* Redraw whole map, monster list */
-	player->upkeep->redraw |= (PR_MAP | PR_MONLIST | PR_ITEMLIST);
+	player->upkeep->redraw |= PR_ITEMLIST;
 
 	context->ident = true;
 	return true;
@@ -2867,27 +2872,44 @@ bool effect_handler_TELEPORT_LEVEL(effect_handler_context_t *context)
  */
 bool effect_handler_RUBBLE(effect_handler_context_t *context)
 {
-	int d;
-	int y1 = player->py;
-	int x1 = player->px;
+	/*
+	 * First we work out how many grids we want to fill with rubble.  Then we
+	 * check that we can actually do this, by counting the number of grids
+	 * available, limiting the number of rubble grids to this number if
+	 * necessary.
+	 */
+	int rubble_grids = randint1(3);
+	int open_grids = count_feats(NULL, NULL, square_isempty, false);
 
-	/* Check around (and under) the character */
-	for (d = 0; d < 9; d++)
-	{
-		/* if not searching under player continue */
-		if (d == 8) continue;
-
-		/* Extract adjacent (legal) location */
-		int yy = y1 + ddy_ddd[d];
-		int xx = x1 + ddx_ddd[d];
-
-		if (square_in_bounds_fully(cave, yy, xx) &&
-				square_isempty(cave, yy, xx) &&
-				one_in_(3)) {
-			square_set_feat(cave, yy, xx, FEAT_RUBBLE);
-			context->ident = true;
-		}
+	if (rubble_grids > open_grids) {
+		rubble_grids = open_grids;
 	}
+
+	/* Avoid infinite loops */
+	int iterations = 0;
+
+	while (rubble_grids > 0 && iterations < 10) {
+		/* Look around the player */
+		for (int d = 0; d < 9; d++) {
+			/* Ignore the player's location */
+			if (d == 8) continue;
+
+			/* Extract adjacent (legal) location */
+			int yy = player->py + ddy_ddd[d];
+			int xx = player->px + ddx_ddd[d];
+
+			if (square_in_bounds_fully(cave, yy, xx) &&
+					square_isempty(cave, yy, xx) &&
+					one_in_(3)) {
+				square_set_feat(cave, yy, xx, FEAT_RUBBLE);
+				rubble_grids--;
+			}
+		}
+
+		iterations++;
+	}
+
+	context->ident = true;
 
 	return true;
 }
@@ -2974,7 +2996,7 @@ bool effect_handler_DESTRUCTION(effect_handler_context_t *context)
 		(void)player_inc_timed(player, TMD_BLIND, 10 + randint1(10),true, true);
 
 	/* Fully update the visuals */
-	player->upkeep->update |= (PU_FORGET_VIEW | PU_UPDATE_VIEW | PU_MONSTERS);
+	player->upkeep->update |= (PU_UPDATE_VIEW | PU_MONSTERS);
 
 	/* Fully update the flow */
 	player->upkeep->update |= (PU_FORGET_FLOW | PU_UPDATE_FLOW);
@@ -3269,7 +3291,7 @@ bool effect_handler_EARTHQUAKE(effect_handler_context_t *context)
 	}
 
 	/* Fully update the visuals */
-	player->upkeep->update |= (PU_FORGET_VIEW | PU_UPDATE_VIEW | PU_MONSTERS);
+	player->upkeep->update |= (PU_UPDATE_VIEW | PU_MONSTERS);
 
 	/* Fully update the flow */
 	player->upkeep->update |= (PU_FORGET_FLOW | PU_UPDATE_FLOW);
